@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ta">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tamil Yappu (யாப்பிலக்கணம்) Prosody Analyzer</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 780px; margin: 30px auto; padding: 0 16px; background: #fafafa; }
+    textarea { width: 100%; font-size: 1.2rem; padding: 12px; border-radius: 8px; border: 1px solid #ccc; }
+    button { margin-top: 10px; padding: 10px 18px; font-size: 1rem; background: #8b1e3f; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+    .word-card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-top: 12px; display: inline-block; margin-right: 10px; min-width: 140px; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-weight: 600; margin: 2px; }
+    .ner { background: #dbeafe; color: #1e40af; }
+    .nirai { background: #fef3c7; color: #92400e; }
+  </style>
+</head>
+<body>
+  <h2>யாப்பிலக்கணம் — Deterministic Tamil Meter (அசை & சீர்) Parser</h2>
+  <textarea id="tamilInput" rows="2">அகர முதல எழுத்தெல்லாம் ஆதி
+பகவன் முதற்றே உலகு</textarea>
+  <button onclick="analyzeProsody()">Analyze Asai & Seer (பகுப்பாய்வு)</button>
+  <div id="output"></div>
+
+  <script>
+    const KURIL_VOWELS = new Set(["அ", "இ", "உ", "எ", "ஒ"]);
+    const NEDIL_VOWELS = new Set(["ஆ", "ஈ", "ஊ", "ஏ", "ஐ", "ஓ", "ஔ"]);
+    const NEDIL_SIGNS = new Set(["ா", "ீ", "ூ", "ே", "ை", "ோ", "ௌ"]);
+    const PULLI = "்";
+    const AYTHAM = "ஃ";
+
+    // Classify a single Tamil grapheme cluster into K (Kuril), N (Nedil), or O (Otru)
+    function classifyGrapheme(g) {
+      if (g === AYTHAM || g.includes(PULLI)) return "O";
+      if (KURIL_VOWELS.has(g)) return "K";
+      if (NEDIL_VOWELS.has(g)) return "N";
+      for (const sign of NEDIL_SIGNS) {
+        if (g.includes(sign)) return "N";
+      }
+      // Consonant + inherent 'அ' or Kuril vowel sign (ி, ு, ெ, ொ)
+      return "K";
+    }
+
+    // Parse one Tamil word into Ner (நேர்) and Nirai (நிரை) Asai units
+    function parseWordToAsai(word) {
+      const clean = word.replace(/[^\u0B80-\u0BFF]/g, "");
+      if (!clean) return null;
+
+      // Use Intl.Segmenter to group Tamil base consonants + vowel/pulli modifiers
+      const segmenter = new Intl.Segmenter("ta", { granularity: "grapheme" });
+      const graphemes = Array.from(segmenter.segment(clean), s => s.segment);
+      const types = graphemes.map(classifyGrapheme);
+
+      const asaiList = [];
+      let i = 0;
+      while (i < types.length) {
+        // Skip leading stray Otru if any
+        if (types[i] === "O") { i++; continue; }
+
+        // Check for Nirai: (Kuril + Kuril) or (Kuril + Nedil), followed by optional Otru(s)
+        if (types[i] === "K" && i + 1 < types.length && (types[i + 1] === "K" || types[i + 1] === "N")) {
+          let chunk = graphemes[i] + graphemes[i + 1];
+          i += 2;
+          while (i < types.length && types[i] === "O") {
+            chunk += graphemes[i];
+            i++;
+          }
+          asaiList.push({ type: "நிரை (Nirai)", text: chunk, cls: "nirai" });
+        } else {
+          // Otherwise Ner: Single Kuril or Nedil, followed by optional Otru(s)
+          let chunk = graphemes[i];
+          i += 1;
+          while (i < types.length && types[i] === "O") {
+            chunk += graphemes[i];
+            i++;
+          }
+          asaiList.push({ type: "நேர் (Ner)", text: chunk, cls: "ner" });
+        }
+      }
+
+      const seerMap = {
+        "நேர்": "நாள்", "நிரை": "மலர்",
+        "நேர்-நேர்": "தேமா", "நிரை-நேர்": "புளிமா",
+        "நிரை-நிரை": "கருவிளம்", "நேர்-நிரை": "கூவிளம்",
+        "நேர்-நேர்-நேர்": "தேமாங்காய்", "நிரை-நேர்-நேர்": "புளிமாங்காய்",
+        "நிரை-நிரை-நேர்": "கருவிளங்காய்", "நேர்-நிரை-நேர்": "கூவிளங்காய்"
+      };
+      const patternKey = asaiList.map(a => a.type.split(" ")[0]).join("-");
+      return { word: clean, asaiList, seerName: seerMap[patternKey] || patternKey };
+    }
+
+    function analyzeProsody() {
+      const text = document.getElementById("tamilInput").value;
+      const words = text.trim().split(/\s+/);
+      const out = document.getElementById("output");
+      out.innerHTML = "";
+
+      words.forEach(w => {
+        const res = parseWordToAsai(w);
+        if (!res) return;
+        const card = document.createElement("div");
+        card.className = "word-card";
+        card.innerHTML = `
+          <strong>${res.word}</strong><br/>
+          <div style="margin:6px 0;">
+            ${res.asaiList.map(a => `<span class="tag ${a.cls}">${a.text} (${a.type.split(" ")[0]})</span>`).join("")}
+          </div>
+          <small>வாய்பாடு: <b>${res.seerName}</b></small>
+        `;
+        out.appendChild(card);
+      });
+    }
+    analyzeProsody();
+  </script>
+</body>
+</html>
